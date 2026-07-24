@@ -1,0 +1,6 @@
+duckdb==1.5.5
+numpy==2.2.6
+pandas==2.3.3
+plotly==6.9.0
+pyarrow==25.0.0
+pytest==9.1.1
