@@ -2,48 +2,23 @@
 
 [![pipeline](https://github.com/vabhishek8/aml-transaction-monitoring-pipeline/actions/workflows/pipeline.yml/badge.svg)](https://github.com/vabhishek8/aml-transaction-monitoring-pipeline/actions/workflows/pipeline.yml)
 
-A rule-based transaction-monitoring pipeline that detects five real AML
-typologies (structuring, layering, impossible-travel, statistical amount
-outliers, high-risk-corridor routing) in a synthetic retail-banking
-transaction feed, validated with case-level detection tests, not just
-"it runs."
+A rule-based transaction-monitoring pipeline that looks for five real AML typologies in a synthetic retail-banking feed: structuring, layering, impossible travel, statistical amount outliers and high-risk-corridor routing. The detection is SQL, and the tests check it catches every case I planted, not just that it runs.
 
 **[Live dashboard →](https://vabhishek8.github.io/aml-transaction-monitoring-pipeline/)**
 
-Built as a companion to [azure-medallion-weather-pipeline](https://github.com/vabhishek8/azure-medallion-weather-pipeline),
-deliberately aimed at banking/financial-services data engineering: the
-detection logic is framed around what AML/BSA compliance actually requires,
-and the Azure IaC is architected for what a bank's InfoSec review gates on
-(no public network exposure, immutable audit storage, centralised
-governance) rather than for minimum cost.
+It's the second of three pipelines, after [azure-medallion-weather-pipeline](https://github.com/vabhishek8/azure-medallion-weather-pipeline), and it's aimed squarely at banking. The detection logic is framed around what AML compliance actually requires, and the Azure IaC is written for what a bank's security review checks, rather than for the lowest cost.
 
----
+## Why I built it
 
-## Why this project exists
+"I trained a fraud model on the Kaggle credit card dataset" shows you can call `.fit()`. It doesn't show judgment about banking data. I wanted to work through the questions a transaction-monitoring engineer actually has:
 
-"I trained a fraud model on the Kaggle credit card dataset" doesn't
-demonstrate banking-domain judgment. It demonstrates you can call
-`.fit()`. This project is scoped around the questions a transaction-
-monitoring engineer actually has to answer:
+- What counts as evidence that a detection rule works, when production data has no ground-truth labels?
+- How do you check a rule catches the pattern it's meant to, without burying investigators in false positives?
+- Where do record-keeping rules (immutability, lineage, retention) turn into architecture requirements?
 
-- What does *evidence* look like for a detection rule, when there's no
-  ground-truth label in production?
-- How do you validate a rule catches the pattern it's designed for, without
-  drowning downstream investigators in false positives?
-- Where does regulatory record-keeping (immutability, lineage, retention)
-  become a data-architecture requirement, not a compliance afterthought?
+There's no real transaction data in here, and there couldn't be, because it doesn't exist publicly. `src/generate_transactions.py` builds a realistic batch and deliberately plants the five typologies with a recorded ground truth. Then `src/gold.py` is validated the way a monitoring team validates a new rule before it sees production: plant known scenarios, then measure recall and the false-positive rate.
 
-No real transaction data is used or could be, it doesn't exist publicly,
-correctly. Instead, `src/generate_transactions.py` synthesizes a realistic
-transaction batch and *deliberately injects* five known AML typologies with
-a recorded ground truth, so the detection SQL (`src/gold.py`) can be
-validated the same way a real transaction-monitoring team validates new
-rules before they ever see production data: known-scenario injection,
-measured recall and false-positive rate.
-
----
-
-## Architecture
+## How it's wired
 
 ```mermaid
 flowchart LR
@@ -80,16 +55,11 @@ flowchart LR
     S --> D1 & D2 & D3 & D4 & D5 --> SCORE --> ALERTS --> DASH
 ```
 
-Each detection signal is independently unit-tested against the injected
-ground truth in `tests/test_gold.py`, and that test file is the part of
-this repo worth reading first.
+Each detection signal is tested on its own against the planted ground truth in `tests/test_gold.py`. If you only read one file, read that one.
 
-## Detection quality (measured, not asserted)
+## How well it detects (measured)
 
-Recall is measured **at the case level**: did the scheme trigger an alert
-on *any* of its transactions? A real monitoring system alerts once a
-pattern has enough evidence, not retroactively on every leg of it. Testing
-row-level recall would be testing the wrong thing.
+Recall is measured per case: did the scheme raise an alert on any of its transactions? A real monitoring system alerts once a pattern has enough evidence, not on every leg of it after the fact, so row-level recall would be measuring the wrong thing.
 
 | Typology | Case-level recall | Notes |
 |---|---|---|
@@ -99,37 +69,17 @@ row-level recall would be testing the wrong thing.
 | Amount outlier | 100% | Per-customer **median/MAD** z-score (see below; this replaced a naive mean/stddev version) |
 | High-risk corridor | 100% | Deterministic jurisdiction/merchant-category rule |
 
-False-positive rate on clean (non-injected) transactions: **7.9%** overall,
-but 86% of those "false positives" are `high_risk_corridor` firing correctly
-on genuinely high-risk-jurisdiction transactions that simply weren't part of
-a designed scenario, not errors. The `impossible_travel` rule contributes
-a real, explainable ~1.5% incidental false-positive rate, driven by
-uniformly-random synthetic timestamps occasionally clustering by chance;
-in production this would be tightened against actual customer travel
-history and card-present authentication signals, not tuned against a
-synthetic artifact.
+On clean, unplanted transactions the false-positive rate is 7.9% overall. 86% of those are `high_risk_corridor` firing correctly on genuinely high-risk-jurisdiction transactions that just weren't part of a planted scenario, so they're not errors. `impossible_travel` adds a real, explainable false-positive rate of about 1.5%, because the synthetic timestamps are uniformly random and sometimes cluster by chance. In production I'd tighten that rule with the customer's actual travel history and card-present signals, not tune it against a synthetic artifact.
 
-### A real bug this caught: outlier detection measured against its own outlier
+## What broke, and how it got caught
 
-The first version of `amount_outlier` used a per-customer mean/stddev
-z-score. Recall was 20%, because the outlier transaction itself inflates
-the sample stddev it's being measured against, worst for customers with
-few transactions (small-n Bessel correction amplifies the effect). Switching
-to a **median/MAD (median absolute deviation)** robust statistic, resistant
-to a small number of extreme values contaminating the baseline, took
-recall from 20% to 100% with the false-positive rate on clean data at
-0.01%. `tests/test_gold.py::test_amount_outlier_uses_robust_stat_not_skewed_by_own_outlier`
-is a regression guard specifically for this failure mode, targeted at
-low-transaction-count customers where it would resurface first.
+My first `amount_outlier` rule scored each transaction against the customer's own mean and standard deviation. Recall was 20%. The outlier inflates the very standard deviation it's being measured against, and the effect is worst for customers with only a few transactions, where the small-sample correction makes it bigger. Switching to median and MAD (median absolute deviation), which barely move for one extreme value, took recall from 20% to 100%, with the false-positive rate for that rule on clean data at 0.01%.
 
----
+There's a test meant to pin this down for low-volume customers, `test_amount_outlier_uses_robust_stat_not_skewed_by_own_outlier`. Right now it skips: with the fixed seed, no low-volume customer gets a planted outlier, so it has nothing to check. The fix is still covered by the case-level recall test, which passes for `amount_outlier`, but the targeted guard needs its own fixture before it protects anything.
 
-## Production Azure mapping
+## The Azure version, and why it isn't running
 
-`infra/main.bicep` translates the same bronze/silver/gold design to a
-governed Azure estate, but the architecture decisions here are different
-from a generic "deploy to Azure" template, because the data class is
-different:
+`infra/main.bicep` maps the same bronze, silver and gold design to a governed Azure estate. The calls are different from a generic template because the data is different:
 
 | Decision | Reasoning |
 |---|---|
@@ -141,7 +91,7 @@ different:
 | 365-day Log Analytics retention in prod (vs. 60-day ops-only baseline) | This is an audit trail, not just operational telemetry. |
 | Not deployed and left running | A standing environment holding transaction-shaped data (even synthetic) with no active monitoring owner is itself a finding in most banking security reviews, same cost-discipline argument as the companion weather-pipeline project, with a compliance angle added. |
 
-Validated with `bicep build` (0 errors, 25 resources). Deploy on demand:
+Validated with `bicep build` (0 errors, 25 resources). To deploy it on demand:
 
 ```bash
 az deployment group create \
@@ -150,15 +100,13 @@ az deployment group create \
   --parameters environment=dev alertEmail=you@example.com
 ```
 
----
-
-## Running locally
+## Running it locally
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python src/pipeline.py           # generate -> silver -> gold -> dashboard
-PYTHONPATH=src pytest tests/ -v  # 29 tests: quality gate, generator invariants, detection recall/FP rate
+PYTHONPATH=src pytest tests/ -v  # 29 tests (28 pass, 1 skips; see below)
 open docs/index.html
 ```
 
@@ -172,18 +120,15 @@ src/
   gold.py                       risk-scoring SQL: structuring, layering, impossible travel, outlier, corridor
   dashboard.py                   renders gold -> static Plotly HTML (risk distribution, alert queue)
   pipeline.py                     orchestrates all four stages
-tests/                          29 pytest cases -- including case-level recall/FP-rate assertions against ground truth
+tests/                          29 pytest cases, including case-level recall and false-positive assertions
 infra/main.bicep                production Azure IaC: private-endpoint-only, immutable storage, Purview, RBAC
 .github/workflows/               scheduled CI: test -> run -> commit refreshed gold data
 ```
 
 ## Stack
 
-Python · pandas · DuckDB (window functions, self-joins, haversine SQL) · Plotly · pytest ·
-GitHub Actions · Bicep (VNet + private endpoints, ADLS Gen2 immutable storage, Key Vault RBAC,
-Azure Data Factory, Synapse managed VNet, Microsoft Purview, Log Analytics)
+Python, pandas, DuckDB (window functions, self-joins, haversine SQL), Plotly, pytest and GitHub Actions. The Bicep covers a VNet with private endpoints, ADLS Gen2 immutable storage, Key Vault RBAC, Azure Data Factory, a Synapse managed VNet, Microsoft Purview and Log Analytics.
 
 ---
 
-Built by [Abhishek Vadlamudi](https://abhishekvadlamudi.com), Senior BI Engineer
-positioning toward Azure Data Engineering in financial services.
+Built by [Abhishek Vadlamudi](https://abhishekvadlamudi.com), Senior Business Intelligence Engineer at Unisys in Sydney.
