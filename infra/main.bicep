@@ -49,9 +49,10 @@ var tags = {
 }
 
 // -----------------------------------------------------------------------------
-// Network: everything data-bearing sits behind private endpoints in this
-// VNet. No storage account, Key Vault, or analytics service in this
-// template accepts a public connection -- that's the single biggest
+// Network: storage and Key Vault sit behind private endpoints in this VNet;
+// Synapse uses a managed VNet, and ADF / Purview have public access disabled.
+// No storage account, Key Vault, or analytics service in this template
+// accepts a public connection -- that's the single biggest
 // difference from a "cost-optimised demo" architecture to a "bank InfoSec
 // would actually approve this" architecture.
 // -----------------------------------------------------------------------------
