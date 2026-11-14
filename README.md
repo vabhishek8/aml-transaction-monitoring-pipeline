@@ -120,7 +120,10 @@ to a small number of extreme values contaminating the baseline, took
 recall from 20% to 100% with the false-positive rate on clean data at
 0.01%. `tests/test_gold.py::test_amount_outlier_uses_robust_stat_not_skewed_by_own_outlier`
 is a regression guard specifically for this failure mode, targeted at
-low-transaction-count customers where it would resurface first.
+low-transaction-count customers where it would resurface first. Note: with
+the current test fixture (`seed=7`) no low-volume customer receives an
+injected outlier, so this test currently skips; 100% outlier recall is still
+enforced by `test_case_level_recall_is_perfect_on_injected_typologies`.
 
 ---
 
@@ -133,7 +136,7 @@ different:
 
 | Decision | Reasoning |
 |---|---|
-| No public network access anywhere (storage, Key Vault, ADF, Synapse) | Every data-bearing service sits behind a private endpoint in a dedicated VNet. This is the default posture a bank's InfoSec review expects, not an opt-in hardening step. |
+| No public network access anywhere (storage, Key Vault, ADF, Synapse, Purview) | `publicNetworkAccess` is disabled on every service. Storage and Key Vault are reached through private endpoints in a dedicated VNet; Synapse uses a managed virtual network, and ADF and Purview have public access disabled without a private endpoint in this template. This is the default posture a bank's InfoSec review expects, not an opt-in hardening step. |
 | Account-level immutable storage with versioning | Transaction records and the alerts derived from them need a defensible chain of custody. AML/CTF Act and SAR record-keeping obligations are a data-architecture requirement, not just a policy document. |
 | Microsoft Purview | Centralised lineage/classification across bronze → silver → gold. BCBS 239's risk-data-aggregation principles are fundamentally about provable data lineage and ownership, not modelling accuracy. |
 | RBAC-authorized Key Vault, purge protection on, 90-day soft-delete | No legacy access policies; every identity is granted the minimum role (`Key Vault Secrets User`, `Storage Blob Data Contributor`) scoped to a single resource. |
@@ -158,7 +161,7 @@ az deployment group create \
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python src/pipeline.py           # generate -> silver -> gold -> dashboard
-PYTHONPATH=src pytest tests/ -v  # 29 tests: quality gate, generator invariants, detection recall/FP rate
+PYTHONPATH=src pytest tests/ -v  # 29 tests (28 run, 1 skips under the fixture seed, see below): quality gate, generator invariants, detection recall/FP rate
 open docs/index.html
 ```
 
